@@ -4,11 +4,10 @@ module ActsAsDefaultable
   extend ActiveSupport::Concern
 
   included do
-    def self.acts_as_defaultable(*options)
+    def self.acts_as_defaultable(column = nil, options = {})
 
       after_save :set_unique_default
 
-      column    = options.first.to_sym unless options.blank?
       column  ||= :default
 
       puts "acts_as_defaultable: Specify a column #{column} in #{self.to_s}" unless self.column_names.include?(column.to_s)
@@ -47,14 +46,29 @@ module ActsAsDefaultable
         def self.default_negative_value
           #{negative_value}
         end
+
+        def self.scope_of_default
+          "#{options[:scope].to_s}"
+        end
+      )
+
+      instance_methods = %(
+        def foreign_key
+          self.class.reflections[self.class.scope_of_default].foreign_key
+        end
       )
 
       class_eval <<-EOF
 
         #{class_methods}
+        #{instance_methods}
 
         def self.default
-          self.all_defaults.first
+          if (defs = self.all_defaults).size == 1
+            defs.first
+          else
+            nil
+          end
         end
 
         def self.all_defaults
@@ -63,7 +77,13 @@ module ActsAsDefaultable
 
         def set_unique_default
           if send(self.class.default_column) == self.class.default_positive_value
-            self.class.all_defaults.reject{ |x| x == self }.each do |obj|
+            self.class.all_defaults.reject do |x|
+              if self.class.scope_of_default
+                x == self || x.send(foreign_key) != self.send(foreign_key)
+              else
+                x == self
+              end
+            end.each do |obj|
               obj.update_attribute self.class.default_column, self.class.default_negative_value
             end
           end
